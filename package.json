@@ -5,10 +5,11 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --check server.js && node --check netlify/functions/cafci.js && node --check scripts/etl-snapshot.js && node --check scripts/fci-money-market-report.js && node --check scripts/argentina-daily-report.js && node --test test/",
-    "etl:snapshot": "node scripts/etl-snapshot.js",
+    "etl:snapshot": "node scripts/etl-snapshot.js && python scripts/bcra-public-series-export.py",
     "report:fci-mm": "node scripts/fci-money-market-report.js",
     "report:argentina": "node scripts/argentina-daily-report.js",
-    "report:tamar-badlar-uvi": "python scripts/tamar-badlar-uvi-timeseries-report.py"
+    "report:tamar-badlar-uvi": "python scripts/tamar-badlar-uvi-timeseries-report.py",
+    "report:bcra-public-series": "python scripts/bcra-public-series-export.py"
   },
   "keywords": [],
   "author": "",
