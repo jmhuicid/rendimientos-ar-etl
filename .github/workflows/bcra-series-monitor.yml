@@ -1,8 +1,6 @@
 name: BCRA series monitor
 
 on:
-  schedule:
-    - cron: "0 21 * * *" # 18:00 Argentina (UTC-3)
   workflow_dispatch:
 
 permissions:
