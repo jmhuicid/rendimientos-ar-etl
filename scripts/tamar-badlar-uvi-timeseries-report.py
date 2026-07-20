@@ -91,7 +91,7 @@ def main() -> None:
     today = pd.to_datetime(args.today).date()
     start_date = pd.to_datetime(args.start_date).date()
     root = Path(__file__).resolve().parents[1]
-    input_path = Path(args.input) if args.input else root / "data" / "input" / f"series_historicas_{today:%Y%m%d}.xlsx"
+    input_path = resolve_input_path(root, today, args.input)
     out_root = Path(args.output_dir) if args.output_dir else root / "data" / "reports"
     out_dir = out_root / today.isoformat()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -159,6 +159,18 @@ def load_reference_tickers(config_path: Path) -> tuple[list[str], list[str]]:
             | set(titulos)
         )
     return letras, titulos
+
+
+def resolve_input_path(root: Path, today: date, explicit_input: str | None) -> Path:
+    if explicit_input:
+        return Path(explicit_input)
+    expected = root / "data" / "input" / f"series_historicas_{today:%Y%m%d}.xlsx"
+    if expected.exists():
+        return expected
+    candidates = sorted((root / "data" / "input").glob("series_historicas_*.xlsx"))
+    if candidates:
+        return candidates[-1]
+    return expected
 
 
 def available_output_path(path: Path) -> Path:

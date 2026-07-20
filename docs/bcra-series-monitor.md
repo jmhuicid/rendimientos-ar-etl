@@ -34,3 +34,14 @@ Los identificadores históricos `128`, `129` y `131` no existen en el catálogo 
 - `1192`: tasa de depósitos a plazo fijo en pesos de otras personas jurídicas.
 
 Las funciones productivas `cer.js` y `cer-ultimo.js` ya consumen correctamente la serie `30` en `v4.0` y no son modificadas por este monitor.
+
+## Corrida diaria de outputs
+
+El workflow `Daily ETL outputs` ejecuta diariamente el snapshot ETL y el reporte TAMAR/BADLAR/UVI. El resultado se consulta en GitHub Actions:
+
+1. Entrar a **Actions**.
+2. Abrir el workflow **Daily ETL outputs**.
+3. Abrir la corrida del día.
+4. Leer el resumen del run y descargar los artifacts:
+   - `daily-snapshot-YYYYMMDD`: JSON/CSV/XLSX de `data/snapshots/YYYY-MM-DD/`.
+   - `tamar-badlar-uvi-report-YYYYMMDD`: Excel y Markdown de `data/reports/YYYY-MM-DD/`.
