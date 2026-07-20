@@ -1,0 +1,56 @@
+name: BCRA series monitor
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # 18:00 Argentina (UTC-3)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Download previous valid state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prior_run=$(gh run list --workflow bcra-series-monitor.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$prior_run" ]; then
+            gh run download "$prior_run" --name bcra-series-monitor-state --dir previous || true
+          fi
+      - name: Run BCRA monitor
+        run: |
+          args=(--config config/bcra-series-monitor.json --output artifacts/bcra-series-monitor)
+          if [ -f previous/bcra-series-state.json ]; then
+            args+=(--previous previous/bcra-series-state.json)
+          fi
+          node scripts/bcra-series-monitor.js "${args[@]}"
+      - name: Write summary
+        if: always()
+        run: |
+          if [ -f artifacts/bcra-series-monitor/bcra-series-report.md ]; then
+            cat artifacts/bcra-series-monitor/bcra-series-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcra-series-monitor-report-${{ github.run_id }}
+          path: artifacts/bcra-series-monitor/bcra-series-report.*
+          retention-days: 90
+      - name: Upload comparison state
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcra-series-monitor-state
+          path: artifacts/bcra-series-monitor/bcra-series-state.json
+          retention-days: 90
