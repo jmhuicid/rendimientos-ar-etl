@@ -40,6 +40,9 @@ jobs:
       - name: Run TAMAR BADLAR UVI report
         run: python scripts/tamar-badlar-uvi-timeseries-report.py --today "$RUN_DATE"
 
+      - name: Run BCRA financial framework report
+        run: python scripts/bcra-financial-framework-report.py --today "$RUN_DATE"
+
       - name: Write summary
         if: always()
         shell: bash

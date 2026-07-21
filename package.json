@@ -10,6 +10,7 @@
     "report:argentina": "node scripts/argentina-daily-report.js",
     "report:tamar-badlar-uvi": "python scripts/tamar-badlar-uvi-timeseries-report.py",
     "report:bcra-public-series": "python scripts/bcra-public-series-export.py",
+    "report:bcra-framework": "python scripts/bcra-financial-framework-report.py",
     "monitor:bcra-series": "node scripts/bcra-series-monitor.js --config config/bcra-series-monitor.json --output artifacts/bcra-series-monitor"
   },
   "keywords": [],
