@@ -90,6 +90,7 @@ def main() -> None:
     summary = build_summary(series)
     changes = build_changes(series)
     block_moment = build_block_moment(summary)
+    general_reading = build_general_reading(summary, block_moment, run_date, snapshot_path)
     framework = build_framework(summary, changes, run_date, snapshot_path)
 
     output_xlsx = output_dir / f"marco_financiero_bcra_{run_date:%Y%m%d}.xlsx"
@@ -97,6 +98,7 @@ def main() -> None:
     write_workbook(
         output_xlsx,
         {
+            "Lectura_general": general_reading,
             "Marco_actual": framework,
             "Momento_por_bloque": block_moment,
             "Resumen_variables": summary,
@@ -108,7 +110,7 @@ def main() -> None:
             "Metadata": metadata,
         },
     )
-    write_markdown(output_md, framework, summary, changes, run_date, snapshot_path)
+    write_markdown(output_md, general_reading, framework, block_moment, summary, changes, run_date, snapshot_path)
 
     print(f"OK Excel: {output_xlsx}")
     print(f"OK Markdown: {output_md}")
@@ -253,6 +255,124 @@ def build_framework(summary: pd.DataFrame, changes: pd.DataFrame, run_date: date
     return pd.DataFrame(rows)
 
 
+def build_general_reading(summary: pd.DataFrame, block_moment: pd.DataFrame, run_date: date, snapshot_path: Path) -> pd.DataFrame:
+    states = {str(row["bloque"]): str(row["estado"]) for _, row in block_moment.iterrows()}
+    rows = [
+        {
+            "orden": 1,
+            "seccion": "Diagnostico general",
+            "titulo": "Regimen nominal actual",
+            "lectura": general_market_diagnosis(summary, states),
+            "implicancia_finanzas": "Usar el tablero como marco diario para decidir posicionamiento en pesos, cobertura, duration bancaria e instrumentos indexados.",
+            "senal_a_monitorear": "Cambio simultaneo de tres ejes: aceleracion cambiaria, tasas reales ex-ante y velocidad de indexacion CER/UVA/UVI.",
+        },
+        {
+            "orden": 2,
+            "seccion": "Balance de fuerzas",
+            "titulo": "Tasas versus indexacion",
+            "lectura": rates_vs_indexation_reading(summary),
+            "implicancia_finanzas": "Comparar retorno nominal reinvertible contra ajuste por inflacion para no confundir tasa alta con rendimiento real positivo.",
+            "senal_a_monitorear": "Si CER/UVA/UVI a 30 dias anualizado o mensualizado supera persistentemente a BADLAR/TAMAR efectiva, aumenta el valor relativo de cobertura indexada.",
+        },
+        {
+            "orden": 3,
+            "seccion": "Liquidez y fondeo",
+            "titulo": "Preferencia por liquidez",
+            "lectura": liquidity_funding_reading(summary, states),
+            "implicancia_finanzas": "Una suba de liquidez transaccional con plazo fijo lateral puede anticipar menor apetito por inmovilizar pesos.",
+            "senal_a_monitorear": "Caja de ahorro y cuentas corrientes creciendo por encima de depositos a plazo durante varias semanas.",
+        },
+        {
+            "orden": 4,
+            "seccion": "Riesgo de mercado",
+            "titulo": "Tipo de cambio como ancla",
+            "lectura": fx_risk_reading(summary, states),
+            "implicancia_finanzas": "El tipo de cambio mayorista ordena precios relativos de activos locales, bonos dollar-linked y expectativas de cobertura.",
+            "senal_a_monitorear": "Salto de TC mayorista 30d por encima de la velocidad de tasas pasivas o de inflacion mensual observada.",
+        },
+        {
+            "orden": 5,
+            "seccion": "Trabajo diario",
+            "titulo": "Uso operativo recomendado",
+            "lectura": "Leer primero la hoja Marco_actual, luego Momento_por_bloque y finalmente Cambios_por_variable para identificar que variable explica el movimiento.",
+            "implicancia_finanzas": "Permite separar ruido diario de cambio de regimen y priorizar conversaciones de tasas, liquidez, cobertura e indexacion.",
+            "senal_a_monitorear": "Nuevos maximos de movimiento 30d, revisiones BCRA y desalineaciones entre expectativas, inflacion e instrumentos indexados.",
+        },
+    ]
+    rows.extend(
+        {
+            "orden": 10 + idx,
+            "seccion": "Momento por bloque",
+            "titulo": row["bloque"],
+            "lectura": row["lectura_momento"],
+            "implicancia_finanzas": row["implicancia_finanzas"],
+            "senal_a_monitorear": row["senal_a_monitorear"],
+        }
+        for idx, row in block_moment.reset_index(drop=True).iterrows()
+    )
+    rows.append(
+        {
+            "orden": 99,
+            "seccion": "Trazabilidad",
+            "titulo": "Fuente y corte",
+            "lectura": f"Fecha de generacion {run_date.isoformat()}, construido desde {snapshot_path.name}.",
+            "implicancia_finanzas": "La lectura respeta la ultima fecha disponible por serie; no fuerza imputaciones para series con rezagos de publicacion.",
+            "senal_a_monitorear": "Diferencias de fecha entre bloques: tasas, monetarias e inflacion pueden tener rezagos distintos.",
+        }
+    )
+    return pd.DataFrame(rows)
+
+
+def general_market_diagnosis(summary: pd.DataFrame, states: dict[str, str]) -> str:
+    fx = states.get("Tipo de cambio", "sin lectura")
+    rates = states.get("Tasas", "sin lectura")
+    inflation = states.get("Inflacion", states.get("Inflación", "sin lectura"))
+    liquidity = states.get("Agregados monetarios", "sin lectura")
+    deposits = states.get("Depositos", states.get("Depósitos", "sin lectura"))
+    credit = states.get("Credito", states.get("Crédito", "sin lectura"))
+    indexation = states.get("Indices de inflacion", states.get("Índices de inflación", "sin lectura"))
+    return (
+        f"El marco muestra {fx} en tipo de cambio, {rates} en tasas, {inflation} en inflacion, "
+        f"{indexation} en indexacion, {liquidity} en liquidez, {deposits} en depositos y {credit} en credito. "
+        "La foto sugiere un mercado todavia nominal, pero con desinflacion operativa y tasas que no aceleran al mismo ritmo que la liquidez transaccional."
+    )
+
+
+def rates_vs_indexation_reading(summary: pd.DataFrame) -> str:
+    badlar = first_available(summary, "BADLAR", "ultimo_valor")
+    tamar = first_available(summary, "TAMAR", "ultimo_valor")
+    uva_30d = first_available(summary, "UVA", "var_30d")
+    uvi_30d = first_available(summary, "UVI", "var_30d")
+    inflation = first_available(summary, "Inflación mensual", "ultimo_valor")
+    return (
+        f"BADLAR/TAMAR estan en {format_inline(badlar)}%/{format_inline(tamar)}% TNA. "
+        f"UVA avanza {format_inline(uva_30d)}% y UVI {format_inline(uvi_30d)}% en 30 dias, con inflacion mensual en {format_inline(inflation)}%. "
+        "La comparacion relevante para Finanzas es si la tasa pasiva compensa la indexacion efectiva y el costo de liquidez."
+    )
+
+
+def liquidity_funding_reading(summary: pd.DataFrame, states: dict[str, str]) -> str:
+    base = first_available(summary, "Base monetaria", "var_30d")
+    caja = first_available(summary, "En Caja de ahorros", "var_30d")
+    plazo = first_available(summary, "A plazo", "var_30d")
+    return (
+        f"El bloque monetario aparece como {states.get('Agregados monetarios', 'sin lectura')}; "
+        f"base monetaria sube {format_inline(base)}% en 30 dias. En depositos, caja de ahorro cambia {format_inline(caja)}% "
+        f"contra plazo fijo {format_inline(plazo)}%, senal de preferencia relativa por liquidez cuando la brecha favorece saldos transaccionales."
+    )
+
+
+def fx_risk_reading(summary: pd.DataFrame, states: dict[str, str]) -> str:
+    mayorista = first_available(summary, "TC Mayorista", "ultimo_valor")
+    fx_30d = first_available(summary, "TC Mayorista", "var_30d")
+    fx_1y = first_available(summary, "TC Mayorista", "var_1y")
+    return (
+        f"El tipo de cambio esta en estado {states.get('Tipo de cambio', 'sin lectura')}: mayorista {format_inline(mayorista)}, "
+        f"{format_inline(fx_30d)}% en 30 dias y {format_inline(fx_1y)}% interanual. "
+        "Mientras el movimiento sea moderado, el foco pasa a spread de tasas e instrumentos indexados; si acelera, cambia la prioridad hacia cobertura."
+    )
+
+
 def block_readings(summary: pd.DataFrame) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for block, group in summary.groupby("bloque"):
@@ -293,6 +413,8 @@ def block_moment_rows(summary: pd.DataFrame) -> list[dict[str, Any]]:
                 "bloque": block,
                 "estado": block_state(block, summary),
                 "lectura_momento": block_market_reading(block, summary),
+                "implicancia_finanzas": block_finance_implication(block, summary),
+                "senal_a_monitorear": block_monitoring_signal(block, summary),
                 "variable_lider_30d": leading_variable(group),
                 "movimiento_lider_30d": leading_value(group),
                 "ultima_fecha_bloque": latest_block_date(group),
@@ -300,6 +422,46 @@ def block_moment_rows(summary: pd.DataFrame) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def block_finance_implication(block: str, summary: pd.DataFrame) -> str:
+    if block == "Tipo de cambio":
+        return "Define sensibilidad de cobertura, valuacion de instrumentos hard-dollar/dollar-linked y traslado esperado a precios nominales."
+    if block == "Tasas":
+        return "Ordena costo de oportunidad de caja en pesos, renovacion de plazos fijos y comparacion contra instrumentos CER/UVA."
+    if block == "Inflación":
+        return "Determina rendimiento real minimo exigido y la urgencia de cobertura indexada."
+    if block == "Expectativas":
+        return "Sirve como ancla prospectiva para presupuesto financiero, tasa requerida y escenarios de desinflacion."
+    if block == "Índices de inflación":
+        return "Mide la capitalizacion efectiva de indexados y permite contrastar tasa nominal contra ajuste observado."
+    if block == "Agregados monetarios":
+        return "Ayuda a anticipar presion nominal, disponibilidad de pesos y liquidez del sistema."
+    if block == "Depósitos":
+        return "Muestra si el mercado prefiere liquidez inmediata o inmovilizar pesos a tasa."
+    if block == "Crédito":
+        return "Aporta lectura de actividad nominal, demanda de financiamiento y expansion del balance privado."
+    return "Bloque disponible para seguimiento y contraste con el resto del tablero."
+
+
+def block_monitoring_signal(block: str, summary: pd.DataFrame) -> str:
+    if block == "Tipo de cambio":
+        return "Aceleracion del TC mayorista 30d por encima de tasas pasivas o de la indexacion mensual."
+    if block == "Tasas":
+        return "Cambio de pendiente BADLAR/TAMAR y spread TAMAR-BADLAR; caidas con inflacion/indexacion firme deterioran tasa real."
+    if block == "Inflación":
+        return "Reversion de inflacion mensual o freno en la baja interanual."
+    if block == "Expectativas":
+        return "Suba del REM o divergencia entre REM, inflacion observada y tasa de mercado."
+    if block == "Índices de inflación":
+        return "Aceleracion simultanea de CER/UVA/UVI en 30d y 90d."
+    if block == "Agregados monetarios":
+        return "Base/circulacion creciendo mas rapido que tasas e inflacion esperada."
+    if block == "Depósitos":
+        return "Caja de ahorro/cuentas corrientes creciendo sobre plazo fijo, o salida de depositos a plazo."
+    if block == "Crédito":
+        return "Credito nominal desacelerando con liquidez alta, o acelerando por encima de fondeo estable."
+    return "Cambios de 30d y 90d fuera del rango reciente."
 
 
 def block_state(block: str, summary: pd.DataFrame) -> str:
@@ -613,18 +775,43 @@ def add_line_chart(wb, sheet_name: str, title: str, desired_columns: list[str], 
     ws.add_chart(chart, anchor)
 
 
-def write_markdown(path: Path, framework: pd.DataFrame, summary: pd.DataFrame, changes: pd.DataFrame, run_date: date, snapshot_path: Path) -> None:
+def write_markdown(
+    path: Path,
+    general_reading: pd.DataFrame,
+    framework: pd.DataFrame,
+    block_moment: pd.DataFrame,
+    summary: pd.DataFrame,
+    changes: pd.DataFrame,
+    run_date: date,
+    snapshot_path: Path,
+) -> None:
     lines = [
         "# Marco financiero BCRA",
         "",
         f"Fecha de generación: {run_date.isoformat()}",
         f"Snapshot fuente: `{snapshot_path}`",
         "",
-        "## Lectura ejecutiva",
+        "## Lectura general",
         "",
     ]
+    for _, row in general_reading.iterrows():
+        lines.append(f"### {row['titulo']}")
+        lines.append(str(row["lectura"]))
+        lines.append("")
+        lines.append(f"**Implicancia para Finanzas:** {row['implicancia_finanzas']}")
+        lines.append("")
+        lines.append(f"**Señal a monitorear:** {row['senal_a_monitorear']}")
+        lines.append("")
+
+    lines.extend(["## Marco actual", ""])
     for _, row in framework.iterrows():
         lines.append(f"- **{row['seccion']} / {row['metrica']}**: {row['valor']}. {row['lectura']}")
+
+    lines.extend(["", "## Momento por bloque", ""])
+    block_display = block_moment.copy()
+    if "movimiento_lider_30d" in block_display:
+        block_display["movimiento_lider_30d"] = block_display["movimiento_lider_30d"].map(format_number)
+    lines.extend(markdown_table(block_display))
 
     lines.extend(["", "## Último dato por variable", ""])
     display = summary.copy()
