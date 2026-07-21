@@ -89,6 +89,7 @@ def main() -> None:
     annual = build_periodic_frame(series, "YE")
     summary = build_summary(series)
     changes = build_changes(series)
+    block_moment = build_block_moment(summary)
     framework = build_framework(summary, changes, run_date, snapshot_path)
 
     output_xlsx = output_dir / f"marco_financiero_bcra_{run_date:%Y%m%d}.xlsx"
@@ -97,6 +98,7 @@ def main() -> None:
         output_xlsx,
         {
             "Marco_actual": framework,
+            "Momento_por_bloque": block_moment,
             "Resumen_variables": summary,
             "Evolucion_diaria": daily,
             "Evolucion_semanal": weekly,
@@ -245,6 +247,7 @@ def build_framework(summary: pd.DataFrame, changes: pd.DataFrame, run_date: date
         },
     ]
     rows.extend(block_readings(summary))
+    rows.extend(block_moment_readings(summary))
     rows.extend(relative_rate_readings(summary))
     rows.extend(momentum_readings(summary))
     return pd.DataFrame(rows)
@@ -263,6 +266,211 @@ def block_readings(summary: pd.DataFrame) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def build_block_moment(summary: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(block_moment_rows(summary))
+
+
+def block_moment_readings(summary: pd.DataFrame) -> list[dict[str, Any]]:
+    return [
+        {
+            "seccion": "Momento de mercado",
+            "metrica": row["bloque"],
+            "valor": row["estado"],
+            "lectura": row["lectura_momento"],
+        }
+        for row in block_moment_rows(summary)
+    ]
+
+
+def block_moment_rows(summary: pd.DataFrame) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for block in sorted(summary["bloque"].dropna().unique()):
+        group = summary[summary["bloque"] == block]
+        rows.append(
+            {
+                "bloque": block,
+                "estado": block_state(block, summary),
+                "lectura_momento": block_market_reading(block, summary),
+                "variable_lider_30d": leading_variable(group),
+                "movimiento_lider_30d": leading_value(group),
+                "ultima_fecha_bloque": latest_block_date(group),
+                "variables": len(group),
+            }
+        )
+    return rows
+
+
+def block_state(block: str, summary: pd.DataFrame) -> str:
+    if block == "Tipo de cambio":
+        move = first_available(summary, "TC Mayorista", "var_30d")
+        if move is None:
+            return "sin lectura"
+        if move >= 5:
+            return "presion cambiaria"
+        if move >= 1:
+            return "deslizamiento moderado"
+        if move <= -1:
+            return "apreciacion/compresion"
+        return "estabilidad relativa"
+    if block == "Tasas":
+        badlar = first_available(summary, "BADLAR", "var_30d")
+        tamar = first_available(summary, "TAMAR", "var_30d")
+        avg_move = mean_available([badlar, tamar])
+        if avg_move is None:
+            return "sin lectura"
+        if avg_move >= 1:
+            return "tasas en suba"
+        if avg_move <= -1:
+            return "tasas en baja"
+        return "tasas laterales"
+    if block == "Inflación":
+        monthly = first_available(summary, "Inflación mensual", "ultimo_valor")
+        yearly_move = first_available(summary, "Inflación interanual", "var_1y")
+        if monthly is None:
+            return "sin lectura"
+        if monthly <= 2 and (yearly_move is None or yearly_move <= 0):
+            return "desinflacion operativa"
+        if monthly >= 3:
+            return "inflacion elevada"
+        return "inflacion en monitoreo"
+    if block == "Expectativas":
+        rem = first_available(summary, "REM", "var_30d")
+        if rem is None:
+            return "sin lectura"
+        if rem < 0:
+            return "expectativas mejorando"
+        if rem > 0:
+            return "expectativas deteriorando"
+        return "expectativas estables"
+    if block == "Índices de inflación":
+        uva_30d = first_available(summary, "UVA", "var_30d")
+        if uva_30d is None:
+            return "sin lectura"
+        if uva_30d >= 3:
+            return "indexacion acelerada"
+        if uva_30d <= 2:
+            return "indexacion moderada"
+        return "indexacion intermedia"
+    if block == "Agregados monetarios":
+        base = first_available(summary, "Base monetaria", "var_30d")
+        circulation = first_available(summary, "Circulación monetaria", "var_30d")
+        avg_move = mean_available([base, circulation])
+        if avg_move is None:
+            return "sin lectura"
+        if avg_move >= 5:
+            return "liquidez expandiendose"
+        if avg_move <= 0:
+            return "liquidez contenida"
+        return "liquidez creciendo moderada"
+    if block == "Depósitos":
+        plazo = first_available(summary, "A plazo", "var_30d")
+        caja = first_available(summary, "En Caja de ahorros", "var_30d")
+        if plazo is None and caja is None:
+            return "sin lectura"
+        if plazo is not None and caja is not None and caja > plazo + 3:
+            return "preferencia por liquidez"
+        if plazo is not None and plazo > 3:
+            return "fondeo a plazo creciendo"
+        return "depositos mixtos/laterales"
+    if block == "Crédito":
+        credit = first_available(summary, "Préstamos de entidades financieras al sector privado", "var_30d")
+        if credit is None:
+            return "sin lectura"
+        if credit >= 3:
+            return "credito nominal creciendo"
+        if credit <= 0:
+            return "credito nominal frenado"
+        return "credito en expansion moderada"
+    return "seguimiento disponible"
+
+
+def block_market_reading(block: str, summary: pd.DataFrame) -> str:
+    if block == "Tipo de cambio":
+        mayorista = first_available(summary, "TC Mayorista", "ultimo_valor")
+        move_30d = first_available(summary, "TC Mayorista", "var_30d")
+        move_1y = first_available(summary, "TC Mayorista", "var_1y")
+        return f"El mayorista opera en {format_inline(mayorista)}; en 30 dias se movio {format_inline(move_30d)}%, y en un año {format_inline(move_1y)}%. Sirve como ancla para precios de activos locales y cobertura."
+    if block == "Tasas":
+        badlar = first_available(summary, "BADLAR", "ultimo_valor")
+        tamar = first_available(summary, "TAMAR", "ultimo_valor")
+        spread = None if badlar is None or tamar is None else tamar - badlar
+        return f"BADLAR esta en {format_inline(badlar)}% TNA y TAMAR en {format_inline(tamar)}% TNA; el spread TAMAR-BADLAR es {format_inline(spread)} p.p. El bloque marca el costo de oportunidad de pesos."
+    if block == "Inflación":
+        monthly = first_available(summary, "Inflación mensual", "ultimo_valor")
+        annual = first_available(summary, "Inflación interanual", "ultimo_valor")
+        monthly_move = first_available(summary, "Inflación mensual", "var_30d")
+        return f"Inflacion mensual en {format_inline(monthly)}% e interanual en {format_inline(annual)}%; el cambio mensual fue {format_inline(monthly_move)} p.p. Define el piso para rendimiento real requerido."
+    if block == "Expectativas":
+        rem = first_available(summary, "REM", "ultimo_valor")
+        rem_30d = first_available(summary, "REM", "var_30d")
+        return f"REM en {format_inline(rem)}%, con variacion de 30 dias de {format_inline(rem_30d)} p.p. Resume el sesgo esperado por el mercado para precios nominales."
+    if block == "Índices de inflación":
+        cer = first_available(summary, "CER", "var_30d")
+        uva = first_available(summary, "UVA", "var_30d")
+        uvi = first_available(summary, "UVI", "var_30d")
+        return f"CER/UVA/UVI avanzan {format_inline(cer)}%, {format_inline(uva)}% y {format_inline(uvi)}% en 30 dias. Es la referencia para instrumentos indexados y comparacion contra tasas nominales."
+    if block == "Agregados monetarios":
+        base = first_available(summary, "Base monetaria", "var_30d")
+        circulation = first_available(summary, "Circulación monetaria", "var_30d")
+        m2 = first_available(summary, "M2 privado", "var_30d")
+        return f"Base monetaria cambia {format_inline(base)}%, circulacion {format_inline(circulation)}% y M2 privado {format_inline(m2)} p.p. en 30 dias. Mide liquidez disponible y presion nominal potencial."
+    if block == "Depósitos":
+        plazo = first_available(summary, "A plazo", "var_30d")
+        caja = first_available(summary, "En Caja de ahorros", "var_30d")
+        ctas = first_available(summary, "En cuentas corrientes", "var_30d")
+        return f"A plazo cambia {format_inline(plazo)}%, caja de ahorro {format_inline(caja)}% y cuentas corrientes {format_inline(ctas)}% en 30 dias. Indica preferencia por liquidez versus duration bancaria."
+    if block == "Crédito":
+        credit = first_available(summary, "Préstamos de entidades financieras al sector privado", "var_30d")
+        credit_yoy = first_available(summary, "Préstamos de entidades financieras al sector privado", "var_1y")
+        return f"Prestamos al sector privado crecen {format_inline(credit)}% en 30 dias y {format_inline(credit_yoy)}% interanual nominal. Ayuda a leer actividad, demanda de pesos y apalancamiento."
+    latest = latest_block_date(summary[summary["bloque"] == block])
+    return f"Bloque disponible para seguimiento; ultima fecha observada {latest}."
+
+
+def first_available(summary: pd.DataFrame, variable: str, column: str) -> float | None:
+    row = summary[summary["variable"] == variable]
+    if row.empty or column not in row:
+        return None
+    value = row.iloc[0][column]
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def mean_available(values: list[float | None]) -> float | None:
+    valid = [value for value in values if value is not None]
+    if not valid:
+        return None
+    return sum(valid) / len(valid)
+
+
+def leading_variable(group: pd.DataFrame) -> str:
+    valid = group.dropna(subset=["var_30d"]).copy()
+    if valid.empty:
+        return ""
+    idx = valid["var_30d"].abs().idxmax()
+    return str(valid.loc[idx, "variable"])
+
+
+def leading_value(group: pd.DataFrame) -> float | None:
+    valid = group.dropna(subset=["var_30d"]).copy()
+    if valid.empty:
+        return None
+    idx = valid["var_30d"].abs().idxmax()
+    return float(valid.loc[idx, "var_30d"])
+
+
+def latest_block_date(group: pd.DataFrame) -> str:
+    dates = sorted(group["ultima_fecha"].dropna().astype(str).unique())
+    return dates[-1] if dates else ""
+
+
+def format_inline(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"{float(value):.2f}"
 
 
 def relative_rate_readings(summary: pd.DataFrame) -> list[dict[str, Any]]:
