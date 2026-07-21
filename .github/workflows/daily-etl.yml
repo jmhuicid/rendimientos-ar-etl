@@ -1,0 +1,82 @@
+name: Daily ETL outputs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: npm ci
+
+      - run: python -m pip install -r requirements.txt
+
+      - name: Resolve run date
+        shell: bash
+        run: |
+          RUN_DATE="$(TZ=America/Argentina/Buenos_Aires date +%F)"
+          echo "RUN_DATE=$RUN_DATE" >> "$GITHUB_ENV"
+          echo "RUN_STAMP=${RUN_DATE//-/}" >> "$GITHUB_ENV"
+
+      - name: Run snapshot ETL
+        run: npm run etl:snapshot
+
+      - name: Run TAMAR BADLAR UVI report
+        run: python scripts/tamar-badlar-uvi-timeseries-report.py --today "$RUN_DATE"
+
+      - name: Write summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Daily ETL outputs"
+            echo ""
+            echo "- Fecha de corrida: \`$RUN_DATE\`"
+            echo "- Snapshot: \`data/snapshots/$RUN_DATE/\`"
+            echo "- Reporte TAMAR/BADLAR/UVI: \`data/reports/$RUN_DATE/\`"
+            echo ""
+            echo "### Archivos generados"
+            for dir in "data/snapshots/$RUN_DATE" "data/reports/$RUN_DATE"; do
+              if [ -d "$dir" ]; then
+                find "$dir" -maxdepth 1 -type f | sort | sed 's/^/- `/' | sed 's/$/`/'
+              else
+                echo "- Sin archivos en \`$dir\`"
+              fi
+            done
+            echo ""
+            echo "Descarga los archivos desde la seccion **Artifacts** de este run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload snapshot files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-snapshot-${{ env.RUN_STAMP }}
+          path: data/snapshots/${{ env.RUN_DATE }}/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload TAMAR BADLAR UVI report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamar-badlar-uvi-report-${{ env.RUN_STAMP }}
+          path: data/reports/${{ env.RUN_DATE }}/
+          if-no-files-found: warn
+          retention-days: 90

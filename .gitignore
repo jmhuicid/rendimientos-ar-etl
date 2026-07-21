@@ -2,5 +2,7 @@ node_modules/
 .netlify/
 .DS_Store
 .env
+__pycache__/
+*.py[cod]
 dist/
 target/
