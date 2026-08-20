@@ -126,6 +126,7 @@ Las fuentes oficiales no deben ser reemplazadas por agregadores cuando exista da
 
 ## Siguiente mejora sugerida
 
+- Ejecutar el [plan de Duration, convexidad y escenarios de tasas](duration-convexity-work-plan.md) para incorporar sensibilidad de segundo orden, DV01 y revaluacion exacta a letras y bonos.
 - Agregar job diario (GitHub Actions o scheduler local) que ejecute `npm run etl:snapshot`.
 - Versionar snapshots si el volumen es aceptable; si crece demasiado, mover historico a SQLite/Parquet/CSV comprimido.
 - Crear reportes derivados en `data/reports/YYYY-MM-DD/`: top FCIs por TNA/TEA, money market vs plazo fijo, CER/UVA, curva soberanos/ONs.
